@@ -60,7 +60,7 @@ async function getGeminiResponse(userId, userMessage) {
   if (conversationHistory[userId].length > 20) {
     conversationHistory[userId] = conversationHistory[userId].slice(-20);
   }
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + GEMINI_API_KEY;
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=" + GEMINI_API_KEY;
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
