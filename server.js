@@ -10,6 +10,22 @@ const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 const PORT = process.env.PORT || 3000;
 
 const conversationHistory = {};
+const userNames = {};
+
+async function getUserName(userId) {
+  if (userNames[userId]) return userNames[userId];
+  try {
+    const response = await fetch(
+      "https://graph.facebook.com/v19.0/" + userId + "?fields=name&access_token=" + PAGE_ACCESS_TOKEN
+    );
+    const data = await response.json();
+    if (data.name) {
+      userNames[userId] = data.name.split(" ")[0];
+      return userNames[userId];
+    }
+  } catch (e) {}
+  return null;
+}
 
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -41,7 +57,8 @@ app.post("/webhook", async (req, res) => {
       console.log("📩 Mensaje de " + senderId + ": \"" + messageText + "\"");
       try {
         await sendTypingIndicator(senderId, true);
-        const reply = await getGeminiResponse(senderId, messageText);
+        const userName = await getUserName(senderId);
+        const reply = await getGeminiResponse(senderId, messageText, userName);
         await sendTypingIndicator(senderId, false);
         await sendMessage(senderId, reply);
         console.log("✅ Respuesta enviada a " + senderId);
@@ -52,7 +69,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-async function getGeminiResponse(userId, userMessage) {
+async function getGeminiResponse(userId, userMessage, userName) {
   if (!conversationHistory[userId]) {
     conversationHistory[userId] = [];
   }
@@ -61,11 +78,12 @@ async function getGeminiResponse(userId, userMessage) {
     conversationHistory[userId] = conversationHistory[userId].slice(-20);
   }
   const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY;
+  const systemText = SYSTEM_PROMPT + (userName ? " El nombre del cliente es " + userName + ", úsalo para personalizar tu respuesta." : "");
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      system_instruction: { parts: [{ text: systemText }] },
       contents: conversationHistory[userId],
       generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
     })
