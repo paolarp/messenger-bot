@@ -99,22 +99,39 @@ async function getGeminiResponse(userId, userMessage, userName) {
 }
 
 async function sendMessage(recipientId, text) {
+  const MAX_LENGTH = 1900;
+  const parts = [];
+  
+  while (text.length > 0) {
+    if (text.length <= MAX_LENGTH) {
+      parts.push(text);
+      break;
+    }
+    let cutIndex = text.lastIndexOf("\n", MAX_LENGTH);
+    if (cutIndex === -1) cutIndex = text.lastIndexOf(" ", MAX_LENGTH);
+    if (cutIndex === -1) cutIndex = MAX_LENGTH;
+    parts.push(text.substring(0, cutIndex));
+    text = text.substring(cutIndex).trim();
+  }
+
   const url = "https://graph.facebook.com/v19.0/me/messages?access_token=" + PAGE_ACCESS_TOKEN;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      recipient: { id: recipientId },
-      message: { text },
-      messaging_type: "RESPONSE"
-    })
-  });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error("Meta API error: " + error);
+  for (const part of parts) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        message: { text: part },
+        messaging_type: "RESPONSE"
+      })
+    });
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error("Meta API error: " + error);
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 }
-
 async function sendTypingIndicator(recipientId, typing) {
   const url = "https://graph.facebook.com/v19.0/me/messages?access_token=" + PAGE_ACCESS_TOKEN;
   await fetch(url, {
