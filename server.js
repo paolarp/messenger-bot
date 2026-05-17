@@ -5,6 +5,7 @@ app.use(express.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 const PORT = process.env.PORT || 3000;
@@ -12,11 +13,11 @@ const PORT = process.env.PORT || 3000;
 const conversationHistory = {};
 const userNames = {};
 
-async function getUserName(userId) {
+async function getUserName(userId, token) {
   if (userNames[userId]) return userNames[userId];
   try {
     const response = await fetch(
-      "https://graph.facebook.com/v19.0/" + userId + "?fields=name&access_token=" + PAGE_ACCESS_TOKEN
+      "https://graph.facebook.com/v19.0/" + userId + "?fields=name&access_token=" + token
     );
     const data = await response.json();
     if (data.name) {
@@ -42,28 +43,52 @@ app.get("/webhook", (req, res) => {
 
 app.post("/webhook", async (req, res) => {
   const body = req.body;
-  if (body.object !== "page" && body.object !== "instagram") {
-    return res.sendStatus(404);
-  }
   res.sendStatus(200);
-  for (const entry of body.entry) {
-    const messagingEvents = entry.messaging || entry.changes?.flatMap((c) => c.value?.messages || []);
-    if (!messagingEvents) continue;
-    for (const event of messagingEvents) {
-      if (event.message?.is_echo) continue;
-      const senderId = event.sender?.id || event.from?.id;
-      const messageText = event.message?.text || event.text;
-      if (!senderId || !messageText) continue;
-      console.log("📩 Mensaje de " + senderId + ": \"" + messageText + "\"");
-      try {
-        await sendTypingIndicator(senderId, true);
-        const userName = await getUserName(senderId);
-        const reply = await getGeminiResponse(senderId, messageText, userName);
-        await sendTypingIndicator(senderId, false);
-        await sendMessage(senderId, reply);
-        console.log("✅ Respuesta enviada a " + senderId);
-      } catch (error) {
-        console.error("❌ Error al procesar mensaje de " + senderId + ": " + error.message);
+
+  // Facebook Messenger
+  if (body.object === "page") {
+    for (const entry of body.entry) {
+      const messagingEvents = entry.messaging || [];
+      for (const event of messagingEvents) {
+        if (event.message?.is_echo) continue;
+        const senderId = event.sender?.id;
+        const messageText = event.message?.text;
+        if (!senderId || !messageText) continue;
+        console.log("📩 [Messenger] Mensaje de " + senderId + ": \"" + messageText + "\"");
+        try {
+          await sendTypingIndicator(senderId, true, PAGE_ACCESS_TOKEN);
+          const userName = await getUserName(senderId, PAGE_ACCESS_TOKEN);
+          const reply = await getGeminiResponse(senderId, messageText, userName);
+          await sendTypingIndicator(senderId, false, PAGE_ACCESS_TOKEN);
+          await sendMessage(senderId, reply, PAGE_ACCESS_TOKEN);
+          console.log("✅ [Messenger] Respuesta enviada a " + senderId);
+        } catch (error) {
+          console.error("❌ [Messenger] Error: " + error.message);
+        }
+      }
+    }
+  }
+
+  // Instagram
+  if (body.object === "instagram") {
+    for (const entry of body.entry) {
+      const messagingEvents = entry.messaging || [];
+      for (const event of messagingEvents) {
+        if (event.message?.is_echo) continue;
+        const senderId = event.sender?.id;
+        const messageText = event.message?.text;
+        if (!senderId || !messageText) continue;
+        console.log("📩 [Instagram] Mensaje de " + senderId + ": \"" + messageText + "\"");
+        try {
+          await sendTypingIndicator(senderId, true, INSTAGRAM_ACCESS_TOKEN);
+          const userName = await getUserName(senderId, INSTAGRAM_ACCESS_TOKEN);
+          const reply = await getGeminiResponse(senderId, messageText, userName);
+          await sendTypingIndicator(senderId, false, INSTAGRAM_ACCESS_TOKEN);
+          await sendMessage(senderId, reply, INSTAGRAM_ACCESS_TOKEN);
+          console.log("✅ [Instagram] Respuesta enviada a " + senderId);
+        } catch (error) {
+          console.error("❌ [Instagram] Error: " + error.message);
+        }
       }
     }
   }
@@ -98,10 +123,9 @@ async function getGeminiResponse(userId, userMessage, userName) {
   return assistantMessage;
 }
 
-async function sendMessage(recipientId, text) {
+async function sendMessage(recipientId, text, token) {
   const MAX_LENGTH = 1900;
   const parts = [];
-  
   while (text.length > 0) {
     if (text.length <= MAX_LENGTH) {
       parts.push(text);
@@ -113,8 +137,7 @@ async function sendMessage(recipientId, text) {
     parts.push(text.substring(0, cutIndex));
     text = text.substring(cutIndex).trim();
   }
-
-  const url = "https://graph.facebook.com/v19.0/me/messages?access_token=" + PAGE_ACCESS_TOKEN;
+  const url = "https://graph.facebook.com/v19.0/me/messages?access_token=" + token;
   for (const part of parts) {
     const response = await fetch(url, {
       method: "POST",
@@ -132,8 +155,9 @@ async function sendMessage(recipientId, text) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 }
-async function sendTypingIndicator(recipientId, typing) {
-  const url = "https://graph.facebook.com/v19.0/me/messages?access_token=" + PAGE_ACCESS_TOKEN;
+
+async function sendTypingIndicator(recipientId, typing, token) {
+  const url = "https://graph.facebook.com/v19.0/me/messages?access_token=" + token;
   await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
