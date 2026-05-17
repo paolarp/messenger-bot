@@ -10,6 +10,8 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 const PORT = process.env.PORT || 3000;
 
+console.log("🔑 INSTAGRAM TOKEN:", INSTAGRAM_ACCESS_TOKEN?.substring(0, 20) + "...");
+
 const conversationHistory = {};
 const userNames = {};
 
