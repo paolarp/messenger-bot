@@ -36,6 +36,8 @@ console.log(
 const conversationHistory = {};
 const userNames = {};
 const userQueues = {};  // Cola por usuario
+const lastActivity = {};  // 🆕 Última vez que cada usuario escribió
+const EXPIRACION_MS = 48 * 60 * 60 * 1000; // 🆕 48 horas
 
 async function getUserName(userId, token, platform) {
   if (userNames[userId]) return userNames[userId];
@@ -150,6 +152,15 @@ app.post("/webhook", async (req, res) => {
 });
 
 async function getGeminiResponse(userId, userMessage, userName) {
+  // 🆕 Si pasaron más de 48 h desde el último mensaje, la conversación
+  // anterior se da por terminada y esta arranca desde cero
+  const ahora = Date.now();
+  if (lastActivity[userId] && ahora - lastActivity[userId] > EXPIRACION_MS) {
+    conversationHistory[userId] = [];
+    console.log("🔄 Conversación expirada para " + userId + ", inicia una nueva");
+  }
+  lastActivity[userId] = ahora;
+
   if (!conversationHistory[userId]) {
     conversationHistory[userId] = [];
   }
@@ -165,7 +176,11 @@ async function getGeminiResponse(userId, userMessage, userName) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: systemText }] },
       contents: conversationHistory[userId],
-      generationConfig: { maxOutputTokens: 1024, temperature: 0.7 }
+      generationConfig: {
+        maxOutputTokens: 2048,               // 🆕 más espacio para la respuesta
+        temperature: 0.7,
+        thinkingConfig: { thinkingBudget: 0 } // 🆕 sin razonamiento interno, respuestas completas y más rápidas
+      }
     })
   });
   if (!response.ok) {
@@ -173,7 +188,13 @@ async function getGeminiResponse(userId, userMessage, userName) {
     throw new Error("Gemini API error: " + error);
   }
   const data = await response.json();
-  const assistantMessage = data.candidates[0].content.parts[0].text;
+  const assistantMessage = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!assistantMessage) {
+    throw new Error("Gemini no devolvió texto, finishReason: " + (data.candidates?.[0]?.finishReason || "desconocido"));
+  }
+  if (data.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+    console.warn("⚠️ Respuesta de Gemini truncada por límite de tokens");
+  }
   conversationHistory[userId].push({ role: "model", parts: [{ text: assistantMessage }] });
   return assistantMessage;
 }
@@ -228,6 +249,22 @@ async function sendTypingIndicator(recipientId, typing, token, platform) {
     })
   }).catch(() => {});
 }
+
+// 🆕 Limpieza de memoria cada hora, elimina conversaciones ya expiradas
+setInterval(() => {
+  const ahora = Date.now();
+  let limpiados = 0;
+  for (const userId of Object.keys(lastActivity)) {
+    if (ahora - lastActivity[userId] > EXPIRACION_MS) {
+      delete conversationHistory[userId];
+      delete lastActivity[userId];
+      delete userNames[userId];
+      delete userQueues[userId];
+      limpiados++;
+    }
+  }
+  if (limpiados > 0) console.log("🧹 " + limpiados + " conversaciones expiradas liberadas de memoria");
+}, 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log("🚀 Bot activo en puerto " + PORT);
