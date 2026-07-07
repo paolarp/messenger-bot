@@ -1,19 +1,41 @@
 require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
 const express = require("express");
+const { registrar } = require("./bot-mejoras/logger");
+const { montarPanel } = require("./bot-mejoras/panel-fallos");
+
 const app = express();
 app.use(express.json());
 
 app.get("/", (req, res) => res.status(200).send("OK"));
 
+montarPanel(app); // 🆕 Panel de fallos en /admin/fallos?token=...
+
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 const PORT = process.env.PORT || 3000;
+
+// 🆕 El prompt ahora vive en prompt-sistema.md (versionado en git).
+// Si el archivo no existe, usa la variable de Railway como respaldo.
+const PROMPT_PATH = path.join(__dirname, "prompt-sistema.md");
+const SYSTEM_PROMPT = fs.existsSync(PROMPT_PATH)
+  ? fs.readFileSync(PROMPT_PATH, "utf8")
+  : process.env.SYSTEM_PROMPT;
+if (!SYSTEM_PROMPT) {
+  console.error("❌ No hay prompt, crea prompt-sistema.md o define SYSTEM_PROMPT");
+}
+console.log(
+  fs.existsSync(PROMPT_PATH)
+    ? "📄 Prompt cargado desde prompt-sistema.md"
+    : "⚠️ Prompt cargado desde variable de entorno (crea prompt-sistema.md)"
+);
 
 const conversationHistory = {};
 const userNames = {};
+const userQueues = {};  // Cola por usuario
 
 async function getUserName(userId, token, platform) {
   if (userNames[userId]) return userNames[userId];
@@ -31,6 +53,52 @@ async function getUserName(userId, token, platform) {
     }
   } catch (e) {}
   return null;
+}
+
+// Procesa mensajes en cola, uno por uno por usuario
+async function processQueue(userId) {
+  if (userQueues[userId].processing) return;
+  userQueues[userId].processing = true;
+
+  while (userQueues[userId].messages.length > 0) {
+    const { senderId, messageText, token, platform } = userQueues[userId].messages.shift();
+    try {
+      await sendTypingIndicator(senderId, true, token, platform);
+      const userName = await getUserName(senderId, token, platform);
+      const reply = await getGeminiResponse(senderId, messageText, userName);
+      await sendTypingIndicator(senderId, false, token, platform);
+      await sendMessage(senderId, reply, token, platform);
+      console.log("✅ [" + platform + "] Respuesta enviada a " + senderId);
+      // 🆕 Registrar el intercambio exitoso (detecta fallos de contenido)
+      registrar({
+        plataforma: platform,
+        senderId: senderId,
+        mensajeUsuario: messageText,
+        respuestaBot: reply,
+      });
+    } catch (error) {
+      console.error("❌ [" + platform + "] Error: " + error.message);
+      // 🆕 Registrar el error técnico
+      registrar({
+        plataforma: platform,
+        senderId: senderId,
+        mensajeUsuario: messageText,
+        respuestaBot: null,
+        huboError: true,
+      });
+    }
+  }
+
+  userQueues[userId].processing = false;
+}
+
+// Encola un mensaje entrante
+function enqueueMessage(senderId, messageText, token, platform) {
+  if (!userQueues[senderId]) {
+    userQueues[senderId] = { messages: [], processing: false };
+  }
+  userQueues[senderId].messages.push({ senderId, messageText, token, platform });
+  processQueue(senderId);
 }
 
 app.get("/webhook", (req, res) => {
@@ -60,16 +128,7 @@ app.post("/webhook", async (req, res) => {
         const messageText = event.message?.text;
         if (!senderId || !messageText) continue;
         console.log("📩 [Messenger] Mensaje de " + senderId + ": \"" + messageText + "\"");
-        try {
-          await sendTypingIndicator(senderId, true, PAGE_ACCESS_TOKEN, "messenger");
-          const userName = await getUserName(senderId, PAGE_ACCESS_TOKEN, "messenger");
-          const reply = await getGeminiResponse(senderId, messageText, userName);
-          await sendTypingIndicator(senderId, false, PAGE_ACCESS_TOKEN, "messenger");
-          await sendMessage(senderId, reply, PAGE_ACCESS_TOKEN, "messenger");
-          console.log("✅ [Messenger] Respuesta enviada a " + senderId);
-        } catch (error) {
-          console.error("❌ [Messenger] Error: " + error.message);
-        }
+        enqueueMessage(senderId, messageText, PAGE_ACCESS_TOKEN, "messenger");
       }
     }
   }
@@ -84,16 +143,7 @@ app.post("/webhook", async (req, res) => {
         const messageText = event.message?.text;
         if (!senderId || !messageText) continue;
         console.log("📩 [Instagram] Mensaje de " + senderId + ": \"" + messageText + "\"");
-        try {
-          await sendTypingIndicator(senderId, true, INSTAGRAM_ACCESS_TOKEN, "instagram");
-          const userName = await getUserName(senderId, INSTAGRAM_ACCESS_TOKEN, "instagram");
-          const reply = await getGeminiResponse(senderId, messageText, userName);
-          await sendTypingIndicator(senderId, false, INSTAGRAM_ACCESS_TOKEN, "instagram");
-          await sendMessage(senderId, reply, INSTAGRAM_ACCESS_TOKEN, "instagram");
-          console.log("✅ [Instagram] Respuesta enviada a " + senderId);
-        } catch (error) {
-          console.error("❌ [Instagram] Error: " + error.message);
-        }
+        enqueueMessage(senderId, messageText, INSTAGRAM_ACCESS_TOKEN, "instagram");
       }
     }
   }
@@ -115,7 +165,7 @@ async function getGeminiResponse(userId, userMessage, userName) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: systemText }] },
       contents: conversationHistory[userId],
-      generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.7 }
     })
   });
   if (!response.ok) {
@@ -181,5 +231,4 @@ async function sendTypingIndicator(recipientId, typing, token, platform) {
 
 app.listen(PORT, () => {
   console.log("🚀 Bot activo en puerto " + PORT);
-  console.log("📡 Webhook URL: https://TU-DOMINIO.com/webhook");
 });
