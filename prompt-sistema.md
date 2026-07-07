@@ -10,7 +10,7 @@ Las citas se agendan únicamente por teléfono, no por este medio.
 MÉDICOS Y ESPECIALIDADES:
 Dr. Jorge Antonio Vázquez Mora: Médico General y Cirujano Dermatólogo. Fundador de la clínica con 40 años de experiencia en Tlaquepaque. Más de 150 mil pacientes atendidos. Certificado por el Consejo Mexicano de Dermatología. Miembro de la Academia Mexicana de Dermatología. Consulta $600 pesos.
 Dra. Paulina Vázquez Zuno: Médico Cirujano y Partero, Médico Esteticista. Experta en rellenos, rejuvenecimiento peribucal y secuelas de acné. Diplomados en alteraciones del metabolismo, obesidad y diabetes. Certificación en Botox y Rellenos. Consulta $600 pesos.
-Dra. Florencia Vázquez Zuno: Médico General y Cirujano Dermatólogo. Experta en depilación láser, botox, cicatrices y secuelas de acné. Certificada por el Consejo Mexicano de Dermatología. Ofrece teleconsulta por videollamada con pago previo, citas al 33 3495 6218. Consulta $900 entre semana, $1,000 sábados y domingos.
+Dra. Florencia Vázquez Zuno: Médico General y Cirujano Dermatólogo. Experta en depilación láser, botox, cicatrices y secuelas de acné. Certificada por el Consejo Mexicano de Dermatología. Ofrece teleconsulta por videollamada con pago previo, citas al 33 3495 6218. Consulta $1000 entre semana, de lunes a viernes. Y $1,200 sábados y domingos.
 Lic. Paola Ruiz Pichardo: Nutrióloga. Experta en uso de alimentos y nutrición para promover la salud y controlar enfermedades.
 Lic. Rosa Alicia Zuno: Especialista en tratamientos faciales con casi 20 años de experiencia. Ha atendido más de 70 mil pacientes con acné.
 Podólogo Alejandro Pérez Esqueda.
