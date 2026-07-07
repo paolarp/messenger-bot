@@ -13,26 +13,39 @@ const { DatabaseSync } = require("node:sqlite");
 const crypto = require("crypto");
 const path = require("path");
 
-// En Railway el volumen se monta en /data. En tu Mac usa la carpeta local.
-const DB_PATH = process.env.RAILWAY_ENVIRONMENT
-  ? "/data/conversaciones.db"
-  : path.join(__dirname, "conversaciones.db");
+// Ruta de la base. En Railway usa el volumen persistente (Railway define
+// RAILWAY_VOLUME_MOUNT_PATH al montarlo). En tu Mac usa la carpeta local.
+const DB_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "conversaciones.db")
+  : process.env.RAILWAY_ENVIRONMENT
+    ? "/data/conversaciones.db"
+    : path.join(__dirname, "conversaciones.db");
 
-const db = new DatabaseSync(DB_PATH);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS conversaciones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    plataforma TEXT NOT NULL,            -- 'messenger' | 'instagram'
-    usuario_hash TEXT NOT NULL,          -- ID anonimizado, nunca el ID real
-    mensaje_usuario TEXT NOT NULL,
-    respuesta_bot TEXT,
-    fallo INTEGER NOT NULL DEFAULT 0,    -- 1 si se detectó un fallo
-    motivo_fallo TEXT                    -- por qué se marcó como fallo
+// El logging NUNCA debe tumbar al bot. Si la base no abre (por ejemplo,
+// el volumen no está montado todavía), el bot arranca igual y solo avisa.
+let db = null;
+try {
+  db = new DatabaseSync(DB_PATH);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversaciones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      plataforma TEXT NOT NULL,            -- 'messenger' | 'instagram'
+      usuario_hash TEXT NOT NULL,          -- ID anonimizado, nunca el ID real
+      mensaje_usuario TEXT NOT NULL,
+      respuesta_bot TEXT,
+      fallo INTEGER NOT NULL DEFAULT 0,    -- 1 si se detectó un fallo
+      motivo_fallo TEXT                    -- por qué se marcó como fallo
+    );
+    CREATE INDEX IF NOT EXISTS idx_fallo ON conversaciones(fallo, fecha);
+  `);
+  console.log("🗄️ Registro de conversaciones activo en " + DB_PATH);
+} catch (err) {
+  console.error(
+    "⚠️ Registro de conversaciones DESACTIVADO, no se pudo abrir la base (" +
+    err.message + "). ¿Está montado el volumen en Railway? El bot funciona normal."
   );
-  CREATE INDEX IF NOT EXISTS idx_fallo ON conversaciones(fallo, fecha);
-`);
+}
 
 // -----------------------------------------------------------------
 // Detección de fallos, heurísticas simples y ajustables
@@ -87,17 +100,20 @@ function detectarFallo({ mensajeUsuario, respuestaBot, huboError }) {
 // API del módulo
 // -----------------------------------------------------------------
 
-const insertar = db.prepare(`
-  INSERT INTO conversaciones
-    (plataforma, usuario_hash, mensaje_usuario, respuesta_bot, fallo, motivo_fallo)
-  VALUES (@plataforma, @usuario_hash, @mensaje_usuario, @respuesta_bot, @fallo, @motivo_fallo)
-`);
+function insertar(fila) {
+  db.prepare(`
+    INSERT INTO conversaciones
+      (plataforma, usuario_hash, mensaje_usuario, respuesta_bot, fallo, motivo_fallo)
+    VALUES (@plataforma, @usuario_hash, @mensaje_usuario, @respuesta_bot, @fallo, @motivo_fallo)
+  `).run(fila);
+}
 
 /**
  * Registrar un intercambio. Llamar después de enviar (o intentar enviar)
  * cada respuesta del bot.
  */
 function registrar({ plataforma, senderId, mensajeUsuario, respuestaBot, huboError = false }) {
+  if (!db) return; // base no disponible, no hacer nada
   try {
     const { fallo, motivo } = detectarFallo({ mensajeUsuario, respuestaBot, huboError });
     // Se guarda un hash del ID, suficiente para agrupar conversaciones
@@ -108,7 +124,7 @@ function registrar({ plataforma, senderId, mensajeUsuario, respuestaBot, huboErr
       .digest("hex")
       .slice(0, 12);
 
-    insertar.run({
+    insertar({
       plataforma,
       usuario_hash,
       mensaje_usuario: String(mensajeUsuario || "").slice(0, 2000),
@@ -125,6 +141,7 @@ function registrar({ plataforma, senderId, mensajeUsuario, respuestaBot, huboErr
 
 /** Fallos recientes, para el panel de revisión */
 function fallosRecientes(dias = 7) {
+  if (!db) return [];
   return db
     .prepare(
       `SELECT fecha, plataforma, usuario_hash, mensaje_usuario, respuesta_bot, motivo_fallo
@@ -137,6 +154,7 @@ function fallosRecientes(dias = 7) {
 
 /** Resumen rápido, totales y tasa de fallo */
 function resumen(dias = 7) {
+  if (!db) return { total: 0, fallos: 0, tasa_fallo_pct: 0 };
   return db
     .prepare(
       `SELECT COUNT(*) AS total,
@@ -150,6 +168,7 @@ function resumen(dias = 7) {
 
 /** Borrar registros con más de N días (privacidad, correr al arrancar) */
 function purgarAntiguos(dias = 90) {
+  if (!db) return;
   const r = db
     .prepare(`DELETE FROM conversaciones WHERE fecha < datetime('now', 'localtime', ?)`)
     .run(`-${dias} days`);
